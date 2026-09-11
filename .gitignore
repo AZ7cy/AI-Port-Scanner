@@ -1,16 +1,40 @@
-﻿__pycache__/
+# Python
+__pycache__/
 *.py[cod]
+*$py.class
+
+# Virtual environments
 .venv/
 venv/
 env/
+ENV/
+
+# PyInstaller
 build/
 dist/
-*.log
-.env
-.env.*
+
+# IDE / Editors
 .vscode/
 .idea/
+
+# Logs
+*.log
+
+# Environment / Secrets
+.env
+.env.*
+*.key
+*.pem
+
+# Testing / Coverage
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Generated reports
 reports/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
