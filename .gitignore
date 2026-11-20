@@ -38,3 +38,13 @@ reports/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Built executables (attach them to a GitHub Release instead of committing)
+*.exe
+
+# Local settings, written by the app to the folder it is started from
+scanner_settings.json
+
+# Exported scan reports (default file names); they can reveal hosts, IPs, and open ports
+scan_report_*
+scan_results_*

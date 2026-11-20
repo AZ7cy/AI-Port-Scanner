@@ -1,0 +1,102 @@
+name: Bug report
+description: Report something in the scanner that does not work as expected.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug.
+
+        **Do not report security vulnerabilities here.** Use [private vulnerability reporting](https://github.com/AZ7cy/AI-Port-Scanner/security/advisories/new) instead.
+
+        Before posting, remove real IP addresses, hostnames, and other sensitive details from logs and screenshots.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the problem and what you expected to happen instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the scan profile, whether Full Detail was enabled, and any settings you changed.
+      placeholder: |
+        1. Select the "Common Ports (1-1024)" profile
+        2. Enable "Full Detail"
+        3. Scan 127.0.0.1
+        4. Export the results to PDF
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How do you run the scanner?
+      options:
+        - Cypher.exe from a GitHub release
+        - From source (python ai_port_scanner.py)
+        - My own PyInstaller build
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Release tag, or commit hash if you run from source (`git rev-parse --short HEAD`).
+      placeholder: v1.0.0 or a1b2c3d
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      multiple: true
+      options:
+        - Nmap scanning
+        - Socket scanning (Full Detail)
+        - Advanced tools (OS, firewall, honeypot, traceroute)
+        - AI analysis (Ollama)
+        - Anomaly detection
+        - Report export
+        - Settings
+        - User interface
+        - Build or executable
+        - Other
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: List the versions that apply. You can get them with `nmap --version`, `python --version`, and `ollama --version`.
+      placeholder: |
+        Windows: 11 24H2
+        Python: 3.12 (source only)
+        Nmap: 7.95
+        Ollama and model: 0.x with llama3 (AI analysis only)
+        Running as Administrator: no
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error messages or logs
+      description: Paste any error dialog text, traceback, or console output. Remove sensitive details first.
+      render: text
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched the existing issues, and this bug has not been reported yet.
+          required: true
+        - label: I only scanned targets that I own or have permission to test.
+          required: true
+        - label: I removed real IP addresses, hostnames, and other sensitive details from this report.
+          required: true

@@ -3,3 +3,6 @@ python-nmap
 requests
 reportlab
 python-docx
+
+# Optional: DNS banner grabbing. The app runs without it but skips DNS banners.
+dnspython
