@@ -22,7 +22,6 @@
 
 ## Checklist
 
-- [ ] I have read [CONTRIBUTING.md](https://github.com/AZ7cy/AI-Port-Scanner/blob/main/CONTRIBUTING.md).
 - [ ] `python -m py_compile ai_port_scanner.py` passes.
 - [ ] I ran the application and tested the change against authorized targets only.
 - [ ] I updated `README.md` if features, requirements, or settings changed.
