@@ -21,7 +21,7 @@ import textwrap
 import threading
 import time
 from datetime import datetime
-from typing import Callable, Dict, List, Optional, Tuple, Any
+from typing import Callable, Dict, List, Optional, Tuple
 
 # ── Third-party imports ──────────────────────────────────────────────────────
 import nmap
@@ -34,9 +34,9 @@ requests.packages.urllib3.disable_warnings(
 )
 
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.platypus import (
     HRFlowable, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
@@ -47,15 +47,15 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
-from PyQt6.QtCore import QThread, QTimer, QPointF, QRectF, Qt, pyqtSignal
+from PyQt6.QtCore import QThread, QPointF, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import (
-    QBrush, QColor, QFont, QIcon, QLinearGradient, QPainter, QPainterPath,
+    QColor, QFont, QIcon, QLinearGradient, QPainter, QPainterPath,
     QPen, QPixmap, QRadialGradient,
 )
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog,
     QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow,
-    QMessageBox, QProgressBar, QPushButton, QSpinBox, QSplitter, QTabWidget,
+    QMessageBox, QProgressBar, QPushButton, QSpinBox, QTabWidget,
     QTextEdit, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -278,7 +278,6 @@ class PortScanner:
         }
         current_host: Optional[str] = None
         total_ports_expected = 0
-        scan_start = time.time()
         in_port_table = False          # True once we see the PORT/STATE header
         host_latency: Dict[str, str] = {}
 
@@ -588,6 +587,7 @@ def _classify_port(host: str, port: int, timeout: float) -> str:
 
     def _log_exc(exc: Exception, note: str = ""):
         """Log the exception if we haven't hit the cap yet."""
+        global _diag_exception_count
         if not _diag_log.handlers:
             return
         with _diag_exception_lock:
@@ -1629,20 +1629,8 @@ they return None on any failure so the caller can continue gracefully.
 
 
 # Optional heavy deps — imported lazily so the app starts even without them.
-_paramiko = None
 _requests  = None
 _dns       = None
-
-
-def _get_paramiko():
-    global _paramiko
-    if _paramiko is None:
-        try:
-            import paramiko
-            _paramiko = paramiko
-        except ImportError:
-            pass
-    return _paramiko
 
 
 def _get_requests():
@@ -1706,31 +1694,24 @@ def _grab_ftp(target: str, port: int, timeout: float) -> Optional[str]:
 
 
 def _grab_ssh(target: str, port: int, timeout: float) -> Optional[str]:
-    """Return SSH remote version string via paramiko."""
-    paramiko = _get_paramiko()
-    if paramiko is None:
-        return None
+    """Return the SSH server's identification string, e.g. 'SSH-2.0-OpenSSH_9.6'.
+
+    SSH servers send this line as soon as the TCP connection opens (RFC 4253,
+    section 4.2), so it can be read without starting a login. Servers may send
+    other lines first, so return the first line that starts with 'SSH-'.
+    """
+    data = b""
     try:
-        ssh = paramiko.SSHClient()
-        # AutoAddPolicy is intentional for banner-grabbing: we only read the
-        # remote version string, so host-key verification is not meaningful here.
-        # Do NOT use this policy in code that authenticates or transfers data.
-        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        ssh.connect(target, port=port, timeout=timeout,
-                    auth_timeout=timeout, banner_timeout=timeout,
-                    allow_agent=False, look_for_keys=False,
-                    username="__banner_grab__", password="__banner_grab__")
-    except paramiko.AuthenticationException:
-        # Auth failed but we already have the banner
-        pass
+        with socket.create_connection((target, port), timeout=timeout) as s:
+            while len(data) < 4096 and not re.search(rb"^SSH-.*\n", data, re.M):
+                chunk = s.recv(1024)
+                if not chunk:
+                    break
+                data += chunk
     except Exception:
-        return None
-    try:
-        version = ssh.get_transport().remote_version if ssh.get_transport() else None
-        ssh.close()
-        return version
-    except Exception:
-        return None
+        pass  # keep whatever arrived before the timeout or disconnect
+    match = re.search(rb"^SSH-[^\r\n]*", data, re.M)
+    return match.group().decode(errors="replace") if match else None
 
 
 def _grab_telnet(target: str, port: int, timeout: float) -> Optional[str]:
@@ -1768,7 +1749,7 @@ def _grab_dns(target: str, timeout: float) -> Optional[str]:
         r.nameservers = [target]
         r.timeout = timeout
         r.lifetime = timeout
-        answer = r.resolve("version.bind.", "TXT", rdclass=resolver.rdataclass.CHAOS)
+        answer = r.resolve("version.bind.", "TXT", rdclass="CHAOS")
         for rdata in answer:
             for s in rdata.strings:
                 return s.decode(errors="replace")
@@ -2618,6 +2599,26 @@ def _is_cleartext_open(p: Dict) -> bool:
     return p["state"] == "open" and p["service"].lower() in _CLEARTEXT_SERVICES
 
 
+# Characters that spreadsheet programs (Excel, LibreOffice, Google Sheets) may
+# treat as the start of a formula. A hostile service can return a banner that
+# begins with one of these, so CSV export prefixes any such cell with a single
+# quote to force the spreadsheet to keep it as plain text.
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_safe(value):
+    """Neutralise CSV formula injection in one exported cell.
+
+    Non-strings (ints, None) are returned unchanged so numbers stay numeric.
+    A string whose first character could start a formula is prefixed with a
+    single quote; every other value is returned unchanged. A leading space
+    already stops a spreadsheet from evaluating a cell, so those are left as-is.
+    """
+    if isinstance(value, str) and value.startswith(_CSV_FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # ReportGenerator
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2771,6 +2772,11 @@ class ReportGenerator:
         ports = _collect_ports(scan_results)
         buf   = io.StringIO()
         w     = csv.writer(buf)
+
+        def wr(row):
+            """Write a data row, guarding each cell against CSV formula injection."""
+            w.writerow([_csv_safe(c) for c in row])
+
         w.writerow(["# AI Port Scanner — Port Report"])
         w.writerow([f"# Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"])
         w.writerow([f"# Target: {target}", f"# Profile: {profile}"])
@@ -2779,9 +2785,9 @@ class ReportGenerator:
         w.writerow(["host","port","proto","state","service",
                     "product","version","extrainfo","reason"])
         for p in ports:
-            w.writerow([p["host"],p["port"],p["proto"],p["state"],
-                        p["service"],p["product"],p["version"],
-                        p["extrainfo"],p["reason"]])
+            wr([p["host"],p["port"],p["proto"],p["state"],
+                p["service"],p["product"],p["version"],
+                p["extrainfo"],p["reason"]])
 
         # Keep CSV useful as a single exported report: include scan statistics,
         # anomaly findings, and AI analysis after the port table. Each section
@@ -2804,27 +2810,27 @@ class ReportGenerator:
             ("elapsed", stats["elapsed"]),
             ("method", stats["method"]),
         ]:
-            w.writerow([label, value])
+            wr([label, value])
 
         w.writerow([])
         w.writerow(["# Anomaly Analysis"])
-        w.writerow(["risk_score", anom["risk_score"]])
-        w.writerow(["risk_label", anom["risk_label"]])
+        wr(["risk_score", anom["risk_score"]])
+        wr(["risk_label", anom["risk_label"]])
         w.writerow([])
         w.writerow(["severity", "host", "port", "service", "description"])
         for warn in anom["warnings"]:
-            w.writerow([warn["severity"], warn["host"], warn["port"],
-                        warn["service"], warn["description"]])
+            wr([warn["severity"], warn["host"], warn["port"],
+                warn["service"], warn["description"]])
         if anom["port_distribution"]:
             w.writerow([])
-            w.writerow(["port_distribution", anom["port_distribution"]])
+            wr(["port_distribution", anom["port_distribution"]])
 
         w.writerow([])
         w.writerow(["# AI Security Analysis"])
-        w.writerow(["attack_surface", ai["attack_surface"]])
-        w.writerow(["risks", "\n".join(ai["risks"]) if isinstance(ai["risks"], list) else ai["risks"]])
-        w.writerow(["next_steps", "\n".join(ai["next_steps"]) if isinstance(ai["next_steps"], list) else ai["next_steps"]])
-        w.writerow(["raw", ai["raw"]])
+        wr(["attack_surface", ai["attack_surface"]])
+        wr(["risks", "\n".join(ai["risks"]) if isinstance(ai["risks"], list) else ai["risks"]])
+        wr(["next_steps", "\n".join(ai["next_steps"]) if isinstance(ai["next_steps"], list) else ai["next_steps"]])
+        wr(["raw", ai["raw"]])
         return buf.getvalue()
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -2835,6 +2841,11 @@ class ReportGenerator:
         anom = _parse_anomalies(anomaly_data)
         buf  = io.StringIO()
         w    = csv.writer(buf)
+
+        def wr(row):
+            """Write a data row, guarding each cell against CSV formula injection."""
+            w.writerow([_csv_safe(c) for c in row])
+
         w.writerow(["# AI Port Scanner — Anomaly Warnings"])
         w.writerow([f"# Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"])
         if anom["risk_score"] is not None:
@@ -2842,8 +2853,8 @@ class ReportGenerator:
         w.writerow([])
         w.writerow(["severity","host","port","service","description"])
         for warn in anom["warnings"]:
-            w.writerow([warn["severity"],warn["host"],warn["port"],
-                        warn["service"],warn["description"]])
+            wr([warn["severity"],warn["host"],warn["port"],
+                warn["service"],warn["description"]])
         return buf.getvalue()
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -4492,7 +4503,6 @@ class MainWindow(QMainWindow):
         
         # Set application icon
         try:
-            from PyQt6.QtGui import QIcon
             logo = LogoGenerator.create_logo(64)
             self.setWindowIcon(QIcon(logo))
         except Exception:
@@ -4565,7 +4575,6 @@ class MainWindow(QMainWindow):
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                     stop:0 #5568d3, stop:1 #6a3f9a);
                 border: 2px solid #00d4ff;
-                box-shadow: 0 0 10px #00d4ff;
             }
             QPushButton:pressed {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,

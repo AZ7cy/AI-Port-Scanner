@@ -13,7 +13,9 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # The app never imports numpy. Pillow mentions it only for type checking,
+    # but PyInstaller bundles it (about 11 MB) whenever it is installed.
+    excludes=["numpy"],
     noarchive=False,
     optimize=0,
 )
